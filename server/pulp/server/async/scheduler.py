@@ -118,36 +118,37 @@ class CeleryProcessTimeoutMonitor(threading.Thread):
         _logger.debug(msg)
         now = ensure_tz(datetime.utcnow())
         oldest_heartbeat_time = now - timedelta(seconds=constants.CELERY_TIMEOUT_SECONDS)
-        worker_list = Worker.objects.all()
-        worker_count = 0
-        resource_manager_count = 0
-        scheduler_count = 0
 
-        for worker in worker_list:
-            if worker.last_heartbeat < oldest_heartbeat_time:
-                msg = _("Worker '%s' has gone missing, removing from list of workers") % worker.name
-                _logger.error(msg)
+        for worker in Worker.objects.filter(last_heartbeat__lt=oldest_heartbeat_time):
+            msg = _("Worker '%s' has gone missing, removing from list of workers") % worker.name
+            _logger.error(msg)
 
-                if worker.name.startswith(constants.SCHEDULER_WORKER_NAME):
-                    worker.delete()
-                else:
-                    _delete_worker(worker.name)
-            elif worker.name.startswith(constants.SCHEDULER_WORKER_NAME):
-                scheduler_count = scheduler_count + 1
-            elif worker.name.startswith(constants.RESOURCE_MANAGER_WORKER_NAME):
-                resource_manager_count = resource_manager_count + 1
+            if worker.name.startswith(constants.SCHEDULER_WORKER_NAME):
+                worker.delete()
             else:
-                worker_count = worker_count + 1
+                _delete_worker(worker.name)
 
-        if resource_manager_count == 0:
+        if not (Worker.objects.filter(name__startswith=constants.RESOURCE_MANAGER_WORKER_NAME)
+                      .exists()):
             msg = _("There are 0 pulp_resource_manager processes running. Pulp will not operate "
                     "correctly without at least one pulp_resource_mananger process running.")
             _logger.error(msg)
 
-        if scheduler_count == 0:
+        if not Worker.objects.filter(name__startswith=constants.SCHEDULER_WORKER_NAME).exists():
             msg = _("There are 0 pulp_celerybeat processes running. Pulp will not operate "
                     "correctly without at least one pulp_celerybeat process running.")
             _logger.error(msg)
+
+        worker_count = Worker.objects.exclude(
+            name__startswith=constants.RESOURCE_MANAGER_WORKER_NAME).exclude(
+            name__startswith=constants.SCHEDULER_WORKER_NAME).count()
+
+        scheduler_count = Worker.objects.filter(
+            name__startswith=constants.SCHEDULER_WORKER_NAME).count()
+
+        resource_manager_count = Worker.objects.filter(
+            name__startswith=constants.RESOURCE_MANAGER_WORKER_NAME).count()
+
         output_dict = {'workers': worker_count, 'celerybeat': scheduler_count,
                        'resource_manager': resource_manager_count}
         msg = _("%(workers)d pulp_worker processes, %(celerybeat)d "
